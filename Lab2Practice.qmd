@@ -1,0 +1,137 @@
+---
+title: "Lab2Practice"
+format: 
+  html:
+    code-fold: true
+    toc: true
+    number-sections: true
+execute:
+    echo: true
+    message: false
+    warning: false
+editor: visual
+---
+
+```{r setup}
+library(tidyverse)
+library(here) 
+library(tsibble)
+library(feasts) 
+library(fable)
+library(ggplot2)
+```
+
+In the same repository as Lab 2, create a new Quarto document and set it up:
+- Code folding (either true (fold, but hide it) or show (fold, but show it))
+- Echo code to the document, but suppress warnings and messages
+- Delete the template text, and create a new code chunk. 
+- Attach any packages you expect to use. Load the data for carbon dioxide measured at the Mauna Loa atmospheric research observatory, from data/co2_mauna_loa.csv.  Examine the metadata file for this data as well, to understand how the monthly values were calculated.
+
+```{r}
+co2_df <- read_csv(here('data/co2_mauna_loa.csv'))
+#View(co2_df)
+```
+
+Analysis part 1:
+- Convert the date column to a proper date format, then turn the dataframe into a time-series dataframe. hint: lubridate::ym() is not the same as tsibble::yearmonth()... the first works great to convert character class to date class, but the second converts to tsibble yearmonth class, which enables functionality from the feasts and fable packages.
+
+```{r}
+co2_ts <- co2_df %>% 
+  mutate(date = tsibble::yearmonth(date)) %>% # tsibble functionality > lubridate # date = column title
+  as_tsibble(key = NULL, #no sub-set
+             index = date) # column that's time series
+
+#View(co2_ts)
+```
+
+- Create an exploratory season plot and an exploratory subseries plot. 
+- Consider whether the trend and seasonality should be considered as additive or multiplicative (you can try different combinations to see how it changes your forecast).
+
+```{r}
+ggplot(co2_ts, aes(x = date, y = co2_mean)) +
+  geom_line() + 
+  labs(x = 'Date', y = 'Mean Carbon Dioxide Levels at Mauna Loa') +
+  theme_bw()
+
+# additive not mulplicative (wavelength doesn't bigger), positive trend (direction goes up)
+```
+```{r}
+co2_ts %>% 
+  gg_subseries(y = co2_mean) 
+```
+Slightly higher average april to june, pretty consistent though
+
+Analysis part 2:
+- Create an ETS exponential smoothing model, including (if appropriate) seasonality and trend. (current and future trend) 
+
+```{r}
+dcmp_co2 <- co2_ts %>% 
+  model(feasts::STL(co2_mean ~ season(period = '1 year') +
+                      trend(window = 25))) #25 is default (12 months b4 and after). Smoother trend if window is 49 (24 mos)
+
+components(dcmp_co2) %>% 
+  autoplot()
+
+# not much noise compared to the mean and trend size
+# trend: up, pretty annual
+```
+```{r}
+co2_ts %>% 
+  ACF(co2_mean) %>% 
+  autoplot()
+
+# high correlation no matter lag, but closer to previous date means more correlation
+```
+- Use the ETS model to forecast CO2 levels for the next 20 years, then plot that forecast on the original data using autoplot().
+
+```{r}
+co2_fit <- co2_ts %>% 
+  filter_index('2000 Jan' ~ .) %>% 
+  model(ets = ETS(co2_mean ~ season(method = "A") + trend(method = "A"))) #ets = exponential ts smoothing
+
+## ERROR - not showing from 2010 Jan (it does for broom augment)
+# I think continuing the pattern, it would be A/A
+```
+
+```{r}
+co2_forecast <- co2_fit %>% 
+  forecast(h = "20 years") #made a forecasting model
+
+co2_forecast %>% 
+  autoplot(co2_ts)
+```
+- Use the ETS model and broom::augment to fit modeled values against the actual observed values. Plot the two together. How well does our model fit our historic observed values?
+
+```{r}
+co2_predicted <- co2_fit %>% 
+  broom::augment()
+#gives dataframe of model, data, energy total, according to model the fitted and residual
+
+ggplot(co2_predicted) + #look at residuals (want normal distributed and mean of 0, no patterns)
+  geom_line(aes(x= date, y = co2_mean)) +
+  geom_line(aes(x= date, y = .fitted), color = 'red', alpha = .7) # red = predicted
+
+#fits well
+```
+- And plot a histogram of the residuals.
+
+```{r}
+ggplot(co2_predicted, aes(x = .resid)) +
+  geom_histogram()
+
+#normal bell curve residuals. Check
+```
+- Optional: create an ETS model just trained on data through 2003, and then create a 20-year forecast - and then compare those forecasted values against the observed values from 2004-2023.
+
+```{r}
+
+```
+
+Followup questions:
+- Write a sentence or two describing the trends you see in the exploratory plots.  Describe any seasonality, trend, or cyclicality you observe.
+In your ETS time series model, explain whether an additive or multiplicative model would make more sense, in terms of the relationship between carbon dioxide, humans, and environmental factors.
+
+## Upward additive trend with additive seasonality, annually we seek one peak and one valley, consistent pattern throughout years. Slightly higher co2 avg in spring, probably not due to photosynthesis. No cycles. Additive matches past trends the best, even with increasing CO2 emissions, so I used it instead of multiplicative. 
+
+- Wrap up!
+- Render your Quarto document, and then stage, commit, and push back to your Github repository.  Make sure the updates are reflected online!
